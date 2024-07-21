@@ -31,4 +31,23 @@ public interface UserConstant {
     String BAN_ROLE = "ban";
 
     // endregion
+
+    // region 登录校验常量
+
+    /**
+     *用户账号最短位数
+     */
+    int MIN_USER_ACCOUNT_LENGTH = 4;
+
+    /**
+     *用户密码最短位数
+     */
+    int MIN_USER_PASSWORD_LENGTH = 8;
+
+    /**
+     *用户重复密码最短位数
+     */
+    int MIN_USER_CHECK_PASSWORD_LENGTH = 8;
+
+    // endregion
 }

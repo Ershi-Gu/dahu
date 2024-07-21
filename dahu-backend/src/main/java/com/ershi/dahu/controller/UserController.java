@@ -10,12 +10,7 @@ import com.ershi.dahu.config.WxOpenConfig;
 import com.ershi.dahu.constant.UserConstant;
 import com.ershi.dahu.exception.BusinessException;
 import com.ershi.dahu.exception.ThrowUtils;
-import com.ershi.dahu.model.dto.user.UserAddRequest;
-import com.ershi.dahu.model.dto.user.UserLoginRequest;
-import com.ershi.dahu.model.dto.user.UserQueryRequest;
-import com.ershi.dahu.model.dto.user.UserRegisterRequest;
-import com.ershi.dahu.model.dto.user.UserUpdateMyRequest;
-import com.ershi.dahu.model.dto.user.UserUpdateRequest;
+import com.ershi.dahu.model.dto.user.*;
 import com.ershi.dahu.model.entity.User;
 import com.ershi.dahu.model.vo.LoginUserVO;
 import com.ershi.dahu.model.vo.UserVO;
@@ -77,7 +72,7 @@ public class UserController {
         String captchaCode = userRegisterRequest.getCaptchaCode();
         String token = userRegisterRequest.getToken();
         if (StringUtils.isAnyBlank(userAccount, userPassword, checkPassword, captchaCode, token)) {
-            return null;
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请填写完整账号信息");
         }
         long result = userService.userRegister(userAccount, userPassword, checkPassword, captchaCode, token);
         return ResultUtils.success(result);
@@ -92,7 +87,7 @@ public class UserController {
      * @return
      */
     @PostMapping("/login")
-    public BaseResponse<LoginUserVO> userLogin(@RequestBody UserLoginRequest userLoginRequest, HttpServletRequest request) {
+    public BaseResponse<String> userLogin(@RequestBody UserLoginRequest userLoginRequest, HttpServletRequest request) {
         if (userLoginRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
@@ -101,8 +96,8 @@ public class UserController {
         if (StringUtils.isAnyBlank(userAccount, userPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        LoginUserVO loginUserVO = userService.userLogin(userAccount, userPassword, request);
-        return ResultUtils.success(loginUserVO);
+        String loginToken = userService.userLogin(userAccount, userPassword, request);
+        return ResultUtils.success(loginToken);
     }
 
     /**
@@ -139,6 +134,7 @@ public class UserController {
         if (request == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
+
         boolean result = userService.userLogout(request);
         return ResultUtils.success(result);
     }

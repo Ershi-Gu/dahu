@@ -1,14 +1,15 @@
 package com.ershi.dahu.common;
 
 import java.io.Serializable;
+
 import lombok.Data;
 
 /**
  * 通用返回类
  *
  * @param <T>
- * @author <a href="https://github.com/Ershi-Gu">Ershi-Gu</a>
- * 
+ * @author Ershi
+ * @date 2024/07/20
  */
 @Data
 public class BaseResponse<T> implements Serializable {

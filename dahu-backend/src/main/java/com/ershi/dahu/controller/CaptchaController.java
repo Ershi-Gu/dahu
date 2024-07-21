@@ -7,6 +7,7 @@ import com.ershi.dahu.model.vo.CaptchaVO;
 import com.ershi.dahu.service.impl.CaptchaServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.annotation.Resource;
@@ -18,6 +19,7 @@ import javax.annotation.Resource;
  */
 @RestController
 @Slf4j
+@RequestMapping("/captcha")
 public class CaptchaController {
 
     @Resource
@@ -27,7 +29,7 @@ public class CaptchaController {
     /**
      * 获取验证码
      */
-    @GetMapping("/captcha")
+    @GetMapping("/get")
     public BaseResponse<CaptchaVO> getCaptcha() {
         CaptchaVO captchaVO = captchaService.createCaptcha();
         return ResultUtils.success(captchaVO);

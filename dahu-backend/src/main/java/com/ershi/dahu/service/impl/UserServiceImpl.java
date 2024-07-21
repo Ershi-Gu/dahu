@@ -1,13 +1,15 @@
 package com.ershi.dahu.service.impl;
 
-import static com.ershi.dahu.constant.UserConstant.USER_LOGIN_STATE;
-
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.lang.UUID;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.ershi.dahu.common.ErrorCode;
-import com.ershi.dahu.common.UserConstant;
 import com.ershi.dahu.constant.CommonConstant;
+import com.ershi.dahu.constant.UserConstant;
 import com.ershi.dahu.exception.BusinessException;
 import com.ershi.dahu.mapper.UserMapper;
 import com.ershi.dahu.model.dto.user.UserQueryRequest;
@@ -17,19 +19,27 @@ import com.ershi.dahu.model.vo.LoginUserVO;
 import com.ershi.dahu.model.vo.UserVO;
 import com.ershi.dahu.service.UserService;
 import com.ershi.dahu.utils.SqlUtils;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Collectors;
-import javax.annotation.Resource;
-import javax.servlet.http.HttpServletRequest;
-
+import com.ershi.dahu.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import me.chanjar.weixin.common.bean.WxOAuth2UserInfo;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
+
+import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+import static com.ershi.dahu.constant.UserRedisConstant.LOGIN_USER_KEY;
+import static com.ershi.dahu.constant.UserRedisConstant.LOGIN_USER_TTL;
+import static com.ershi.dahu.constant.UserConstant.USER_LOGIN_STATE;
 
 /**
  * 用户服务实现
@@ -48,6 +58,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Resource
     private CaptchaServiceImpl captchaService;
 
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
     @Override
     public long userRegister(String userAccount, String userPassword, String checkPassword, String captchaCode, String token) {
         // 1. 校验
@@ -61,7 +74,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 || checkPassword.length() < UserConstant.MIN_USER_CHECK_PASSWORD_LENGTH) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户密码过短");
         }
-        // 密码和校验密码相同
+        // 判断密码和校验密码是否相同
         if (!userPassword.equals(checkPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "两次输入的密码不一致");
         }
@@ -95,7 +108,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request) {
+    public String userLogin(String userAccount, String userPassword, HttpServletRequest request) {
         // 1. 校验
         if (StringUtils.isAnyBlank(userAccount, userPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
@@ -106,6 +119,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (userPassword.length() < 8) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "密码错误");
         }
+
         // 2. 加密
         String encryptPassword = DigestUtils.md5DigestAsHex((SALT + userPassword).getBytes());
         // 查询用户是否存在
@@ -118,9 +132,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             log.info("user login failed, userAccount cannot match userPassword");
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不存在或密码错误");
         }
-        // 3. 记录用户的登录态
-        request.getSession().setAttribute(USER_LOGIN_STATE, user);
-        return this.getLoginUserVO(user);
+
+        // 3. 记录用户的登录态-保存到redis
+        // 3.1.随机生成token，作为登录令牌
+        String loginToken = UUID.randomUUID().toString(true);
+        // 3.2.将User对象转为HashMap存储
+        User loginUser = BeanUtil.copyProperties(user, User.class);
+        Map<String, Object> loginUserMap = BeanUtil.beanToMap(loginUser, new HashMap<>(),
+                CopyOptions.create()
+                        .setIgnoreNullValue(false) // 不忽略 null 值
+                        .setFieldValueEditor((fieldName, fieldValue) -> fieldValue == null ? null : fieldValue.toString()));
+        // 3.3.存储
+        String tokenKey = LOGIN_USER_KEY + loginToken;
+        stringRedisTemplate.opsForHash().putAll(tokenKey, loginUserMap);
+        // 3.4.设置token有效期
+        stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.MINUTES);
+        return loginToken;
     }
 
     @Override
@@ -163,16 +190,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     @Override
     public User getLoginUser(HttpServletRequest request) {
-        // 先判断是否已登录
-        Object userObj = request.getSession().getAttribute(USER_LOGIN_STATE);
-        User currentUser = (User) userObj;
+        // 获取当前登录用户
+        User currentUser = UserHolder.getUser();
         if (currentUser == null || currentUser.getId() == null) {
-            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
-        }
-        // 从数据库查询（追求性能的话可以注释，直接走缓存）
-        long userId = currentUser.getId();
-        currentUser = this.getById(userId);
-        if (currentUser == null) {
             throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
         return currentUser;
@@ -223,12 +243,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     @Override
     public boolean userLogout(HttpServletRequest request) {
-        if (request.getSession().getAttribute(USER_LOGIN_STATE) == null) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "未登录");
+        // 1. 获取请求头中的token
+        String token = request.getHeader("Authorization");
+        if (StrUtil.isBlank(token)) {
+            // 未登录
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
-        // 移除登录态
-        request.getSession().removeAttribute(USER_LOGIN_STATE);
-        return true;
+
+        // 2. 删除Redis中的用户数据
+        String key  = LOGIN_USER_KEY + token;
+        Boolean result = stringRedisTemplate.delete(key);
+
+        return result;
     }
 
     @Override

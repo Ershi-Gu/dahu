@@ -4,7 +4,7 @@ import cn.hutool.captcha.CaptchaUtil;
 import cn.hutool.captcha.CircleCaptcha;
 import cn.hutool.core.codec.Base64;
 import cn.hutool.core.util.IdUtil;
-import com.ershi.dahu.common.CaptchaConstant;
+import com.ershi.dahu.constant.CaptchaConstant;
 import com.ershi.dahu.model.vo.CaptchaVO;
 import com.ershi.dahu.service.CaptchaService;
 import lombok.extern.slf4j.Slf4j;

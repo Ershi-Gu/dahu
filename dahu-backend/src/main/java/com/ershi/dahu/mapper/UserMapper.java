@@ -1,14 +1,14 @@
 package com.ershi.dahu.mapper;
 
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.ershi.dahu.model.entity.User;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 
 /**
- * 用户数据库操作
- *
- * @author <a href="https://github.com/Ershi-Gu">Ershi-Gu</a>
- * 
- */
+* @author qingtian_jun
+* @description 针对表【user(用户)】的数据库操作Mapper
+* @createDate 2024-07-07 20:40:28
+* @Entity com.ershi.dahu.model.entity.User
+*/
 public interface UserMapper extends BaseMapper<User> {
 
 }
