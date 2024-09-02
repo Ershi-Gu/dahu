@@ -1,8 +1,19 @@
 declare namespace API {
+  type aiGenerateQuestionBySSEUsingGETParams = {
+    appId?: number;
+    optionNumber?: number;
+    questionNumber?: number;
+  };
+
   type AiGenerateQuestionRequest = {
     appId?: number;
     optionNumber?: number;
     questionNumber?: number;
+  };
+
+  type AnswerResultCountDTO = {
+    resultCount?: number;
+    resultName?: string;
   };
 
   type App = {
@@ -28,6 +39,12 @@ declare namespace API {
     appName?: string;
     appType?: number;
     scoringStrategy?: number;
+  };
+
+  type AppAnswerCountDTO = {
+    appId?: number;
+    appName?: string;
+    userAnswerCount?: number;
   };
 
   type AppEditRequest = {
@@ -100,6 +117,18 @@ declare namespace API {
   type BaseResponseCaptchaVO_ = {
     code?: number;
     data?: CaptchaVO;
+    message?: string;
+  };
+
+  type BaseResponseListAnswerResultCountDTO_ = {
+    code?: number;
+    data?: AnswerResultCountDTO[];
+    message?: string;
+  };
+
+  type BaseResponseListAppAnswerCountDTO_ = {
+    code?: number;
+    data?: AppAnswerCountDTO[];
     message?: string;
   };
 
@@ -235,6 +264,11 @@ declare namespace API {
 
   type DeleteRequest = {
     id?: number;
+  };
+
+  type getAnswerResultUsingGETParams = {
+    /** appId */
+    appId?: number;
   };
 
   type getAppVOByIdUsingGETParams = {
@@ -549,6 +583,10 @@ declare namespace API {
     user?: UserVO;
   };
 
+  type SseEmitter = {
+    timeout?: number;
+  };
+
   type uploadFileUsingPOSTParams = {
     biz?: string;
   };
@@ -595,6 +633,7 @@ declare namespace API {
   type UserAnswerAddRequest = {
     appId?: number;
     choices?: string[];
+    id?: number;
   };
 
   type UserAnswerEditRequest = {

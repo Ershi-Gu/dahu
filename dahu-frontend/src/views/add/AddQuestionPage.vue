@@ -27,6 +27,9 @@
             :appId="appId"
             :appData="data"
             :onSuccess="onAiGenerateSuccess"
+            :onSSESuccess="onAiGenerateSuccessSSE"
+            :onSSEClose="onSSEClose"
+            :onSSEStart="onSSEStart"
           />
         </a-space>
         <!-- 遍历每道题目 -->
@@ -142,6 +145,7 @@ import message from "@arco-design/web-vue/es/message";
 import { getAppVoByIdUsingGet } from "@/api/appController";
 import { APP_TYPE_MAP } from "@/constant/app";
 import AiGenerateQuestionDrawer from "@/views/add/components/AiGenerateQuestionDrawer.vue";
+import { Message } from "@arco-design/web-vue";
 
 interface Props {
   appId: string;
@@ -298,6 +302,38 @@ const handleSubmit = async () => {
 const onAiGenerateSuccess = (result: API.QuestionContentDTO[]) => {
   message.success(`AI 生成题目成功，生成了 ${result.length} 道题目`);
   questionContent.value = [...questionContent.value, ...result];
+};
+
+/**
+ * AI 生成题目成功后执行（SSE）
+ */
+const onAiGenerateSuccessSSE = (result: API.QuestionContentDTO) => {
+  questionContent.value = [...questionContent.value, result];
+};
+
+// 声明一个变量来存储 loadingMessage
+let loadingMessage: any = null;
+
+/**
+ * SSE 开始生成
+ * @param event
+ */
+const onSSEStart = (event: any) => {
+  loadingMessage = Message.loading({
+    content: "开始实时生成题目...请勿关闭当前页面",
+    duration: 100000,
+  });
+};
+
+/**
+ * SSE 生成完毕
+ * @param event
+ */
+const onSSEClose = (event: any) => {
+  if (loadingMessage) {
+    loadingMessage.close();
+  }
+  message.success("生成题目完毕！");
 };
 </script>
 

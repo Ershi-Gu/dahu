@@ -161,6 +161,7 @@ const doDelete = async (record: API.App) => {
   });
   if (res.data.code === 0) {
     loadData();
+    message.success("删除应用成功");
   } else {
     message.error("删除失败，" + res.data.message);
   }
@@ -187,6 +188,7 @@ const doReview = async (
     reviewMessage,
   });
   if (res.data.code === 0) {
+    message.success(record.id + " 应用审核状态修改成功");
     loadData();
   } else {
     message.error("审核失败，" + res.data.message);

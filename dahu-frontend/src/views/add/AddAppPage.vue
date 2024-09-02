@@ -22,15 +22,16 @@
       <a-form-item field="appDesc" label="应用描述">
         <a-input v-model="form.appDesc" placeholder="请输入应用描述" />
       </a-form-item>
-      <a-form-item field="appIcon" label="应用图标">
-        <a-input v-model="form.appIcon" placeholder="请输入应用图标" />
-      </a-form-item>
       <!--      <a-form-item field="appIcon" label="应用图标">-->
-      <!--        <PictureUploader-->
-      <!--          :value="form.appIcon"-->
-      <!--          :onChange="(value) => (form.appIcon = value)"-->
-      <!--        />-->
+      <!--        <a-input v-model="form.appIcon" placeholder="请输入应用图标" />-->
       <!--      </a-form-item>-->
+      <a-form-item field="appIcon" label="应用图标">
+        <PictureUploader
+          :value="form.appIcon"
+          :onChange="(value) => (form.appIcon = value)"
+          biz="app_icon"
+        />
+      </a-form-item>
       <a-form-item field="appType" label="应用类型">
         <a-select
           v-model="form.appType"
@@ -79,6 +80,7 @@ import {
   getAppVoByIdUsingGet,
 } from "@/api/appController";
 import { APP_SCORING_STRATEGY_MAP, APP_TYPE_MAP } from "@/constant/app";
+import PictureUploader from "@/components/PictureUploader.vue";
 
 interface Props {
   id: string;
@@ -136,6 +138,11 @@ watchEffect(() => {
  * 提交
  */
 const handleSubmit = async () => {
+  // 检查图片是否上传
+  if (!form.value.appIcon) {
+    message.error("请先上传应用图标");
+    return;
+  }
   let res: any;
   // 如果是修改应用
   if (props.id) {

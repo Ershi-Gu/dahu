@@ -58,7 +58,10 @@ import { useRouter } from "vue-router";
 import { listQuestionVoByPageUsingPost } from "@/api/questionController";
 import message from "@arco-design/web-vue/es/message";
 import { getAppVoByIdUsingGet } from "@/api/appController";
-import { addUserAnswerUsingPost } from "@/api/userAnswerController";
+import {
+  addUserAnswerUsingPost,
+  generateUserAnswerIdUsingGet,
+} from "@/api/userAnswerController";
 import { Message } from "@arco-design/web-vue";
 
 interface Props {
@@ -69,6 +72,30 @@ const props = withDefaults(defineProps<Props>(), {
   appId: () => {
     return "";
   },
+});
+
+/**
+ * 当前答题会话唯一id
+ */
+const id = ref<number>();
+
+/**
+ * 获取当前答题会话唯一id
+ */
+const generateId = async () => {
+  const res = await generateUserAnswerIdUsingGet();
+  if (res.data.code === 0) {
+    id.value = res.data.data as any;
+  } else {
+    Message.error("获取答题会话唯一id失败，" + res.data.message);
+  }
+};
+
+/**
+ * 进入页面时获取唯一id
+ */
+watchEffect(() => {
+  generateId();
 });
 
 // 提交按钮状态变量
@@ -165,6 +192,7 @@ const doSubmit = async () => {
   const res = await addUserAnswerUsingPost({
     appId: props.appId as any,
     choices: answerList,
+    id: id.value as any,
   });
   loadingMessage.close();
   if (res.data.code === 0 && res.data.data) {
