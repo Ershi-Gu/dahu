@@ -17,9 +17,12 @@ import com.ershi.dahu.model.vo.QuestionVO;
 import com.ershi.dahu.service.QuestionService;
 import com.ershi.dahu.service.UserService;
 import com.ershi.dahu.utils.UserHolder;
+import com.zhipu.oapi.service.v4.model.ModelData;
+import io.reactivex.Flowable;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
@@ -27,8 +30,6 @@ import java.util.List;
 
 /**
  * 题目表接口
- *
- *
  */
 @RestController
 @RequestMapping("/question")
@@ -247,9 +248,15 @@ public class QuestionController {
 
     @PostMapping("/ai_generate")
     public BaseResponse<List<QuestionContentDTO>> aiGenerateQuestion(
-            @RequestBody AiGenerateQuestionRequest aiGenerateQuestionRequest){
+            @RequestBody AiGenerateQuestionRequest aiGenerateQuestionRequest) {
 
         return ResultUtils.success(questionService.aiGenerateQuestion(aiGenerateQuestionRequest));
+    }
+
+    @GetMapping("/ai_generate/sse")
+    public SseEmitter aiGenerateQuestionBySSE(AiGenerateQuestionRequest aiGenerateQuestionRequest) {
+
+        return questionService.aiGenerateQuestionBySSE_VIP(aiGenerateQuestionRequest);
     }
 
     // endregion

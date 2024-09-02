@@ -1,27 +1,35 @@
 package com.ershi.dahu.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.crypto.digest.DigestUtil;
+import cn.hutool.crypto.digest.MD5;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.ershi.dahu.common.ErrorCode;
 import com.ershi.dahu.constant.CommonConstant;
+import com.ershi.dahu.exception.BusinessException;
 import com.ershi.dahu.exception.ThrowUtils;
 import com.ershi.dahu.mapper.UserAnswerMapper;
+import com.ershi.dahu.model.dto.useranswer.UserAnswerAddRequest;
 import com.ershi.dahu.model.dto.useranswer.UserAnswerQueryRequest;
 import com.ershi.dahu.model.entity.App;
 import com.ershi.dahu.model.entity.User;
 import com.ershi.dahu.model.entity.UserAnswer;
 import com.ershi.dahu.model.vo.UserAnswerVO;
 import com.ershi.dahu.model.vo.UserVO;
+import com.ershi.dahu.scoring.ScoringStrategyExecutor;
 import com.ershi.dahu.service.AppService;
 import com.ershi.dahu.service.UserAnswerService;
 import com.ershi.dahu.service.UserService;
 import com.ershi.dahu.utils.SqlUtils;
+import com.ershi.dahu.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanUtils;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -44,6 +52,9 @@ public class UserAnswerServiceImpl extends ServiceImpl<UserAnswerMapper, UserAns
     @Resource
     private AppService appService;
 
+    @Resource
+    private ScoringStrategyExecutor scoringStrategyExecutor;
+
     /**
      * 校验数据
      *
@@ -55,10 +66,12 @@ public class UserAnswerServiceImpl extends ServiceImpl<UserAnswerMapper, UserAns
         ThrowUtils.throwIf(useranswer == null, ErrorCode.PARAMS_ERROR);
         // 从对象中取值
         Long appId = useranswer.getAppId();
+        Long id = useranswer.getId();
         // 创建数据时，参数不能为空
         if (add) {
             // 补充校验规则
             ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "appId 非法");
+            ThrowUtils.throwIf(id == null || id <= 0, ErrorCode.PARAMS_ERROR, "id 非法");
         }
         // 修改数据时，有参数则校验
         // 补充校验规则
@@ -141,7 +154,6 @@ public class UserAnswerServiceImpl extends ServiceImpl<UserAnswerMapper, UserAns
         UserAnswerVO useranswerVO = UserAnswerVO.objToVo(useranswer);
         useranswerVO.setChoices(JSONUtil.toList(useranswer.getChoices(), String.class));
 
-        // region 可选
         // 1. 关联查询用户信息
         Long userId = useranswer.getUserId();
         User user = null;
@@ -173,7 +185,6 @@ public class UserAnswerServiceImpl extends ServiceImpl<UserAnswerMapper, UserAns
         List<UserAnswerVO> useranswerVOList = useranswerList.stream().map(UserAnswerVO::objToVo).collect(Collectors.toList());
 
         // todo 可以根据需要为封装对象补充值，不需要的内容可以删除
-        // region 可选
         // 1. 关联查询用户信息
         Set<Long> userIdSet = useranswerList.stream().map(UserAnswer::getUserId).collect(Collectors.toSet());
         Map<Long, List<User>> userIdUserListMap = userService.listByIds(userIdSet).stream()
@@ -198,4 +209,47 @@ public class UserAnswerServiceImpl extends ServiceImpl<UserAnswerMapper, UserAns
         return useranswerVOPage;
     }
 
+    @Override
+    public Long addUserAnswer(UserAnswerAddRequest userAnswerAddRequest, HttpServletRequest request) {
+        ThrowUtils.throwIf(userAnswerAddRequest == null, ErrorCode.PARAMS_ERROR);
+
+        // 获取数据
+        UserAnswer useranswer = new UserAnswer();
+        BeanUtils.copyProperties(userAnswerAddRequest, useranswer);
+        List<String> choices = userAnswerAddRequest.getChoices();
+        useranswer.setChoices(JSONUtil.toJsonStr(choices));
+
+        // 数据校验
+        App app = validUserAnswer(useranswer, true);
+
+        // 填充默认值
+        User loginUser = UserHolder.getUser();
+        useranswer.setUserId(loginUser.getId());
+
+        // 写入数据库（保证幂等）
+        try{
+            boolean result = this.save(useranswer);
+            ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        } catch (DuplicateKeyException e){
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "短时间内请勿重复点击!");
+        }
+
+        // 返回新写入的数据 id
+        long userAnswerId = useranswer.getId();
+
+        // 调用评分模块
+        UserAnswer userAnswerWithResult = scoringStrategyExecutor.doScoring(app, choices);
+
+        // 更新用户答案记录表
+        try {
+            if (userAnswerWithResult != null) {
+                userAnswerWithResult.setId(userAnswerId);
+                this.updateById(userAnswerWithResult);
+            }
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "评分计算错误");
+        }
+
+        return userAnswerId;
+    }
 }

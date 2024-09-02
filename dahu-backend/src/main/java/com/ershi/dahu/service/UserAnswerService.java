@@ -1,8 +1,10 @@
 package com.ershi.dahu.service;
 
+import co.elastic.clients.elasticsearch.nodes.Http;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.ershi.dahu.model.dto.useranswer.UserAnswerAddRequest;
 import com.ershi.dahu.model.dto.useranswer.UserAnswerQueryRequest;
 import com.ershi.dahu.model.entity.App;
 import com.ershi.dahu.model.entity.UserAnswer;
@@ -50,4 +52,12 @@ public interface UserAnswerService extends IService<UserAnswer> {
      * @return
      */
     Page<UserAnswerVO> getUserAnswerVOPage(Page<UserAnswer> useranswerPage, HttpServletRequest request);
+
+    /**
+     * 新增用户答题记录
+     * @param userAnswerAddRequest
+     * @param request
+     * @return {@link Long}
+     */
+    Long addUserAnswer(UserAnswerAddRequest userAnswerAddRequest, HttpServletRequest request);
 }

@@ -1,5 +1,6 @@
 package com.ershi.dahu.controller;
 
+import cn.hutool.core.util.IdUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ershi.dahu.annotation.AuthCheck;
@@ -14,9 +15,8 @@ import com.ershi.dahu.model.dto.useranswer.UserAnswerAddRequest;
 import com.ershi.dahu.model.dto.useranswer.UserAnswerEditRequest;
 import com.ershi.dahu.model.dto.useranswer.UserAnswerQueryRequest;
 import com.ershi.dahu.model.dto.useranswer.UserAnswerUpdateRequest;
-import com.ershi.dahu.model.entity.App;
-import com.ershi.dahu.model.entity.UserAnswer;
 import com.ershi.dahu.model.entity.User;
+import com.ershi.dahu.model.entity.UserAnswer;
 import com.ershi.dahu.model.vo.UserAnswerVO;
 import com.ershi.dahu.scoring.ScoringStrategyExecutor;
 import com.ershi.dahu.service.UserAnswerService;
@@ -28,7 +28,6 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
-import java.util.List;
 
 /**
  * 用户答题记录表接口
@@ -44,9 +43,6 @@ public class UserAnswerController {
     @Resource
     private UserService userService;
 
-    @Resource
-    private ScoringStrategyExecutor scoringStrategyExecutor;
-
     // region 增删改查
 
     /**
@@ -58,34 +54,7 @@ public class UserAnswerController {
      */
     @PostMapping("/add")
     public BaseResponse<Long> addUserAnswer(@RequestBody UserAnswerAddRequest useranswerAddRequest, HttpServletRequest request) {
-        ThrowUtils.throwIf(useranswerAddRequest == null, ErrorCode.PARAMS_ERROR);
-        UserAnswer useranswer = new UserAnswer();
-        BeanUtils.copyProperties(useranswerAddRequest, useranswer);
-        List<String> choices = useranswerAddRequest.getChoices();
-        useranswer.setChoices(JSONUtil.toJsonStr(choices));
-        // 数据校验
-        App app = useranswerService.validUserAnswer(useranswer, true);
-        // 填充默认值
-        User loginUser = UserHolder.getUser();
-        useranswer.setUserId(loginUser.getId());
-        // 写入数据库
-        boolean result = useranswerService.save(useranswer);
-        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
-        // 返回新写入的数据 id
-        long userAnswerId = useranswer.getId();
-
-        // 调用评分模块
-        UserAnswer userAnswerWithResult = scoringStrategyExecutor.doScoring(app, choices);
-        // 更新用户答案记录表
-        try {
-            if (userAnswerWithResult != null) {
-                userAnswerWithResult.setId(userAnswerId);
-                useranswerService.updateById(userAnswerWithResult);
-            }
-        } catch (Exception e) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "评分计算错误");
-        }
-
+        Long userAnswerId = useranswerService.addUserAnswer(useranswerAddRequest, request);
         return ResultUtils.success(userAnswerId);
     }
 
@@ -257,4 +226,13 @@ public class UserAnswerController {
     }
 
     // endregion
+
+    /**
+     * 返回每次用户进入答题界面后的本次唯一Id
+     * @return {@link BaseResponse}<{@link Long}>
+     */
+    @GetMapping("generate/id")
+    public BaseResponse<Long> generateUserAnswerId() {
+        return ResultUtils.success(IdUtil.getSnowflakeNextId());
+    }
 }

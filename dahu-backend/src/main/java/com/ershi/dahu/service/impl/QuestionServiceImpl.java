@@ -25,16 +25,24 @@ import com.ershi.dahu.service.AppService;
 import com.ershi.dahu.service.QuestionService;
 import com.ershi.dahu.service.UserService;
 import com.ershi.dahu.utils.SqlUtils;
+import com.ershi.dahu.utils.UserHolder;
+import com.zhipu.oapi.service.v4.model.ModelData;
+import io.reactivex.Flowable;
+import io.reactivex.Scheduler;
+import io.reactivex.schedulers.Schedulers;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -52,6 +60,9 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
 
     @Resource
     private AiManager aiManager;
+
+    @Resource
+    private Scheduler vipScheduler;
 
     /**
      * 校验数据
@@ -221,6 +232,171 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
         return JSONUtil.toList(result, QuestionContentDTO.class);
     }
 
+    /**
+     * AI生成题目（流式）
+     *
+     * @param aiGenerateQuestionRequest
+     * @return {@link SseEmitter}
+     */
+    @Override
+    public SseEmitter aiGenerateQuestionBySSE(AiGenerateQuestionRequest aiGenerateQuestionRequest) {
+        ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
+        // 获取请求信息
+        Long appId = aiGenerateQuestionRequest.getAppId();
+        int questionNumber = aiGenerateQuestionRequest.getQuestionNumber();
+        int optionNumber = aiGenerateQuestionRequest.getOptionNumber();
+
+        // 获取应用信息
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.PARAMS_ERROR);
+
+        // 封装prompt
+        String userMessage = getGenerateQuestionUserMessage(app, questionNumber, optionNumber);
+
+        // 创建SSE连接对象
+        SseEmitter sseEmitter = new SseEmitter(0L);
+        // 调用AI接口生成题目（流式返回）
+        Flowable<ModelData> modelDataFlowable
+                = aiManager.doSSEAiTitleRequest(AiGenerateQuestionConstant.GENERATE_QUESTION_SYSTEM_MESSAGE, userMessage);
+        // 流式信息处理
+        StringBuilder sb = new StringBuilder();
+        AtomicInteger counter = new AtomicInteger();
+        modelDataFlowable
+                .observeOn(Schedulers.io())
+                // 预处理
+                // 1. 获取字符串
+                .map(modelData -> modelData.getChoices().get(0).getDelta().getContent())
+                // 2. 去除特殊字符串，保留文本字符串
+                .map(message -> message.replaceAll("\\s", ""))
+                // 3. 过滤掉空字符
+                .filter(StringUtils::isNotBlank)
+                // 4. 将一个字符串转换为多个单独字符流，方便处理
+                .flatMap(message -> {
+                    List<Character> characterList = new ArrayList<>();
+                    for (char c : message.toCharArray()) {
+                        characterList.add(c);
+                    }
+                    return Flowable.fromIterable(characterList);
+                })
+                // 到这一步拿到的流就是每个字符单独的流，再做处理
+                // 1. 截取一道完整的题目
+                .doOnNext(c -> {
+                    // 1.1 记录题目开头
+                    if (c == '{') {
+                        counter.addAndGet(1);
+                    }
+                    // 1.2 添加中间题目的内容
+                    if (counter.get() > 0) {
+                        sb.append(c);
+                    }
+                    // 1.3 通过}判断是否是题目结尾
+                    if (c == '}') {
+                        counter.addAndGet(-1);
+                        // 一道完整的题目结尾
+                        if (counter.get() == 0) {
+                            // 通过SSE返回一道题目
+                            sseEmitter.send(JSONUtil.toJsonStr(sb.toString()));
+                            // 重置题目操作器，准备下一道题
+                            sb.setLength(0);
+                        }
+                    }
+                })
+                .doOnError(e -> log.error("SSE Error ->", e))
+                // 通知SSE完成
+                .doOnComplete(sseEmitter::complete)
+                .subscribe();
+
+        return sseEmitter;
+    }
+
+
+    /**
+     * VIP-AI生成题目（SSE实时推送）
+     *
+     * @param aiGenerateQuestionRequest
+     * @return {@link SseEmitter}
+     */
+    @Override
+    public SseEmitter aiGenerateQuestionBySSE_VIP(AiGenerateQuestionRequest aiGenerateQuestionRequest) {
+        ThrowUtils.throwIf(aiGenerateQuestionRequest == null, ErrorCode.PARAMS_ERROR);
+        // 获取请求信息
+        Long appId = aiGenerateQuestionRequest.getAppId();
+        int questionNumber = aiGenerateQuestionRequest.getQuestionNumber();
+        int optionNumber = aiGenerateQuestionRequest.getOptionNumber();
+
+        // 获取应用信息
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.PARAMS_ERROR);
+
+        // 封装prompt
+        String userMessage = getGenerateQuestionUserMessage(app, questionNumber, optionNumber);
+
+        // 创建SSE连接对象
+        SseEmitter sseEmitter = new SseEmitter(0L);
+        // 调用AI接口生成题目（流式返回）
+        Flowable<ModelData> modelDataFlowable
+                = aiManager.doSSEAiTitleRequest(AiGenerateQuestionConstant.GENERATE_QUESTION_SYSTEM_MESSAGE, userMessage);
+
+        // 创建线程池
+        Scheduler scheduler = Schedulers.io();
+        // 获取用户信息，判断是否是VIP用户
+        User loginUser = UserHolder.getUser();
+        String userRole = loginUser.getUserRole();
+        if ("VIP".equals(userRole)) {
+            scheduler = vipScheduler;
+        }
+
+        // 流式信息处理
+        StringBuilder sb = new StringBuilder();
+        AtomicInteger counter = new AtomicInteger();
+        modelDataFlowable
+                .observeOn(scheduler)
+                // 预处理
+                // 1. 获取字符串
+                .map(modelData -> modelData.getChoices().get(0).getDelta().getContent())
+                // 2. 去除特殊字符串，保留文本字符串
+                .map(message -> message.replaceAll("\\s", ""))
+                // 3. 过滤掉空字符
+                .filter(StringUtils::isNotBlank)
+                // 4. 将一个字符串转换为多个单独字符流，方便处理
+                .flatMap(message -> {
+                    List<Character> characterList = new ArrayList<>();
+                    for (char c : message.toCharArray()) {
+                        characterList.add(c);
+                    }
+                    return Flowable.fromIterable(characterList);
+                })
+                // 到这一步拿到的流就是每个字符单独的流，再做处理
+                // 1. 截取一道完整的题目
+                .doOnNext(c -> {
+                    // 1.1 记录题目开头
+                    if (c == '{') {
+                        counter.addAndGet(1);
+                    }
+                    // 1.2 添加中间题目的内容
+                    if (counter.get() > 0) {
+                        sb.append(c);
+                    }
+                    // 1.3 通过}判断是否是题目结尾
+                    if (c == '}') {
+                        counter.addAndGet(-1);
+                        // 一道完整的题目结尾
+                        if (counter.get() == 0) {
+                            // 通过SSE返回一道题目
+                            sseEmitter.send(JSONUtil.toJsonStr(sb.toString()));
+                            // 重置题目操作器，准备下一道题
+                            sb.setLength(0);
+                        }
+                    }
+                })
+                .doOnError(e -> log.error("SSE Error ->", e))
+                // 通知SSE完成
+                .doOnComplete(sseEmitter::complete)
+                .subscribe();
+
+        return sseEmitter;
+    }
+
 
     /**
      * 处理生成题目请求的AI输入的信息
@@ -244,10 +420,11 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
 
     /**
      * AI生成题目字符串处理
+     *
      * @param resultJson
      * @return {@link String}
      */
-    private String resultJsonHandle(String resultJson){
+    private String resultJsonHandle(String resultJson) {
         int start = resultJson.indexOf("[");
         int end = resultJson.lastIndexOf("]");
         return resultJson.substring(start, end + 1);

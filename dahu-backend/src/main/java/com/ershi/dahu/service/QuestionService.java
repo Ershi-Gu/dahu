@@ -10,14 +10,15 @@ import com.ershi.dahu.model.dto.question.QuestionQueryRequest;
 import com.ershi.dahu.model.entity.App;
 import com.ershi.dahu.model.entity.Question;
 import com.ershi.dahu.model.vo.QuestionVO;
+import com.zhipu.oapi.service.v4.model.ModelData;
+import io.reactivex.Flowable;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.List;
 
 /**
  * 题目表服务
- *
- *
  */
 public interface QuestionService extends IService<Question> {
 
@@ -25,7 +26,7 @@ public interface QuestionService extends IService<Question> {
      * 校验数据
      *
      * @param question
-     * @param add 对创建的数据进行校验
+     * @param add      对创建的数据进行校验
      */
     void validQuestion(Question question, boolean add);
 
@@ -36,7 +37,7 @@ public interface QuestionService extends IService<Question> {
      * @return
      */
     QueryWrapper<Question> getQueryWrapper(QuestionQueryRequest questionQueryRequest);
-    
+
     /**
      * 获取题目表封装
      *
@@ -58,18 +59,36 @@ public interface QuestionService extends IService<Question> {
 
     /**
      * AI生成题目
+     *
      * @param aiGenerateQuestionRequest
      * @return {@link BaseResponse}<{@link List}<{@link QuestionContentDTO}>>
      */
-    List<QuestionContentDTO> aiGenerateQuestion(AiGenerateQuestionRequest aiGenerateQuestionRequest );
+    List<QuestionContentDTO> aiGenerateQuestion(AiGenerateQuestionRequest aiGenerateQuestionRequest);
 
 
     /**
      * 处理生成题目请求的AI输入的信息
-     * @param app 应用
+     *
+     * @param app            应用
      * @param questionNumber 题目数
-     * @param optionNumber 选项数
+     * @param optionNumber   选项数
      * @return {@link String} AI输入信息
      */
     String getGenerateQuestionUserMessage(App app, int questionNumber, int optionNumber);
+
+
+    /**
+     * AI生成题目（SSE实时推送）
+     *
+     * @param aiGenerateQuestionRequest
+     * @return {@link SseEmitter}
+     */
+    SseEmitter aiGenerateQuestionBySSE(AiGenerateQuestionRequest aiGenerateQuestionRequest);
+
+    /**
+     * VIP-AI生成题目（SSE实时推送）
+     * @param aiGenerateQuestionRequest
+     * @return {@link SseEmitter}
+     */
+    SseEmitter aiGenerateQuestionBySSE_VIP(AiGenerateQuestionRequest aiGenerateQuestionRequest);
 }

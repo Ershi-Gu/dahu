@@ -28,6 +28,8 @@ import org.springframework.web.bind.annotation.*;
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 
+import static com.ershi.dahu.constant.RedisCacheConstant.APP_CACHE;
+
 /**
  * 应用表接口
  */
@@ -93,6 +95,10 @@ public class AppController {
         // 操作数据库
         boolean result = appService.removeById(id);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
+        // 更新缓存
+        appService.deleteAppInRedis(APP_CACHE);
+
         return ResultUtils.success(true);
     }
 
@@ -165,16 +171,7 @@ public class AppController {
     @PostMapping("/list/page/vo")
     public BaseResponse<Page<AppVO>> listAppVOByPage(@RequestBody AppQueryRequest appQueryRequest,
                                                      HttpServletRequest request) {
-        long current = appQueryRequest.getCurrent();
-        long size = appQueryRequest.getPageSize();
-        // 限制爬虫
-        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
-        appQueryRequest.setReviewStatus(ReviewStatusEnum.PASSED.getValue());
-        // 查询数据库
-        Page<App> appPage = appService.page(new Page<>(current, size),
-                appService.getQueryWrapper(appQueryRequest));
-        // 获取封装类
-        return ResultUtils.success(appService.getAppVOPage(appPage, request));
+        return ResultUtils.success(appService.listAppVOPageByCacheExpired(appQueryRequest,request));
     }
 
     /**

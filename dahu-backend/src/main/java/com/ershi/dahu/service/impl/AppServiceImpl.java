@@ -1,8 +1,13 @@
 package com.ershi.dahu.service.impl;
 
+import java.time.LocalDateTime;
 import java.util.Date;
 
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -13,6 +18,7 @@ import com.ershi.dahu.exception.ThrowUtils;
 import com.ershi.dahu.mapper.AppMapper;
 import com.ershi.dahu.model.dto.app.AppQueryRequest;
 import com.ershi.dahu.model.entity.App;
+import com.ershi.dahu.model.entity.RedisData;
 import com.ershi.dahu.model.entity.User;
 import com.ershi.dahu.model.enums.AppTypeEnum;
 import com.ershi.dahu.model.enums.ReviewStatusEnum;
@@ -26,6 +32,9 @@ import com.ershi.dahu.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -33,7 +42,11 @@ import javax.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import static com.ershi.dahu.constant.RedisCacheConstant.*;
 
 /**
  * 应用表服务实现
@@ -44,6 +57,12 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private RedissonClient redissonClient;
 
     /**
      * 校验数据
@@ -84,7 +103,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         if (StringUtils.isNotBlank(appDesc)) {
             ThrowUtils.throwIf(appDesc.length() >= 80, ErrorCode.PARAMS_ERROR, "应用描述应当小于80");
         }
-        if (reviewStatus != null){
+        if (reviewStatus != null) {
             ReviewStatusEnum reviewStatusEnum = ReviewStatusEnum.getEnumByValue(reviewStatus);
             ThrowUtils.throwIf(reviewStatusEnum == null, ErrorCode.PARAMS_ERROR, "审核状态非法");
         }
@@ -171,7 +190,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     }
 
     /**
-     * 分页获取应用表封装
+     * 获取应用表分页封装
      *
      * @param appPage
      * @param request
@@ -211,6 +230,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     /**
      * 审核应用（仅管理员)
+     *
      * @param reviewRequest
      * @param request
      * @return {@link Boolean}
@@ -240,6 +260,120 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         app.setReviewTime(new Date());
         boolean result = this.updateById(app);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+
+        // 更新缓存-删除旧缓存
+        deleteAppInRedis(APP_CACHE);
+
         return true;
+    }
+
+    /**
+     * 缓存查询应用列表
+     *
+     * @param appQueryRequest
+     * @param request
+     * @return {@link Page}<{@link AppVO}>
+     */
+    @Override
+    public Page<AppVO> listAppVOPageByCacheExpired(AppQueryRequest appQueryRequest, HttpServletRequest request) {
+        long current = appQueryRequest.getCurrent();
+        long size = appQueryRequest.getPageSize();
+        // 限制爬虫
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        appQueryRequest.setReviewStatus(ReviewStatusEnum.PASSED.getValue());
+
+        // 1. 从缓存中查询应用
+        String appCacheKey = APP_CACHE + current + ":" + size;
+        String appPageJson = stringRedisTemplate.opsForValue().get(appCacheKey);
+
+        // 2. 判断缓存是否命中
+        // 3. 缓存未命中，由当前线程直接建立缓存
+        if (StringUtils.isBlank(appPageJson)) {
+            // 4.4.1 从数据库查询最新数据
+            Page<App> appPageByResource = this.page(new Page<>(current, size),
+                    this.getQueryWrapper(appQueryRequest));
+            // 4.4.2 更新缓存内容，同时更新逻辑过期时间
+            appToRedis(appCacheKey, appPageByResource, APP_CACHE_EXPIRE_HOURS);
+            return getAppVOPage(appPageByResource, request);
+        }
+
+        // 4. 缓存命中
+        RedisData appRedisData = JSONUtil.toBean(appPageJson, RedisData.class);
+        JSONObject data = (JSONObject) appRedisData.getData();
+        Page<App> appPage = JSON.parseObject(data.toJSONString(2), new TypeReference<Page<App>>() {
+        });
+
+        // 4.1 判断缓存是否过期
+        LocalDateTime expireTime = appRedisData.getExpireTime();
+
+        // 4.2 未过期，直接返回应用缓存 => 结束
+        if (expireTime.isAfter(LocalDateTime.now())) {
+            return getAppVOPage(appPage, request);
+        }
+
+        // 4.3 缓存过期，尝试获取互斥锁
+        String lockKey = LOCK_APP + appCacheKey;
+        RLock lock = redissonClient.getLock(lockKey);
+
+        boolean isLock = lock.tryLock();
+
+        // 4.4 获取锁成功，开启独立线程重建缓存
+        if (isLock) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    // 4.4.1 从数据库查询最新数据
+                    Page<App> appPageByResource = this.page(new Page<>(current, size),
+                            this.getQueryWrapper(appQueryRequest));
+                    // 4.4.2 更新缓存内容，同时更新逻辑过期时间
+                    appToRedis(appCacheKey, appPageByResource, APP_CACHE_EXPIRE_HOURS);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    // 4.4.3 重建完成释放锁
+                    if (lock.isLocked()) {
+                        // 只有当前获取锁的线程能释放当前锁
+                        if (lock.isHeldByCurrentThread()) {
+                            lock.unlock();
+                        }
+                    }
+                }
+
+            });
+        }
+
+        // 4.5 返回商铺信息
+        return getAppVOPage(appPage, request);
+    }
+
+    /**
+     * APP缓存预热
+     *
+     * @param appCacheKey
+     * @param appPage
+     * @param expireSeconds
+     */
+    public void appToRedis(String appCacheKey, Page<App> appPage, Long expireSeconds) {
+        // 封装RedisData
+        RedisData redisData = new RedisData();
+        redisData.setData(appPage);
+        redisData.setExpireTime(LocalDateTime.now().plusHours(expireSeconds));
+        // 写入redis
+        stringRedisTemplate.opsForValue().set(appCacheKey, JSONUtil.toJsonStr(redisData));
+    }
+
+
+    /**
+     * 删除Redis中旧缓存
+     *
+     * @param appCacheKey
+     */
+    public void deleteAppInRedis(String appCacheKey) {
+        // 获取所有前缀为 APP_CACHE 的 key
+        Set<String> keys = stringRedisTemplate.keys(APP_CACHE + "*");
+
+        if (keys != null && !keys.isEmpty()) {
+            // 删除这些 key
+            stringRedisTemplate.delete(keys);
+        }
     }
 }
